@@ -1,0 +1,124 @@
+# PetClinic API — manual test requests
+# Compatible with VS Code REST Client and the JetBrains HTTP client.
+# Click "Send Request" above each block to fire it.
+#
+# Recommended order on a fresh DB:
+#   1. Run ### signup once (or ### login if the user already exists).
+#   2. Token vars auto-fill from the named login/signup response — every
+#      subsequent request below uses {{accessToken}} / {{refreshToken}}.
+#   3. CRUD blocks chain via {{<name>.response.body.id}} — run the create
+#      block first, then the update/delete below it.
+#   4. The destructive auth flows (password change, reset, logout) live at
+#      the bottom on purpose; running them earlier will invalidate the token.
+
+@baseUrl = http://localhost:3000
+@username = httptest
+@password = hunter2hunter2
+@email = httptest@example.com
+
+# These resolve once /auth/login (or /auth/signup) has been sent during the
+# current session. REST Client and the JetBrains HTTP client both support
+# the {{requestName.response.body.field}} reference form.
+@accessToken = {{login.response.body.access_token}}
+@refreshToken = {{login.response.body.refresh_token}}
+
+
+############################################################
+# Public — no auth required
+############################################################
+
+### Health check
+GET {{baseUrl}}/health
+
+### OpenAPI raw spec
+GET {{baseUrl}}/api/docs.json
+
+
+############################################################
+# Setup — get a token
+############################################################
+
+
+### Login (run this at the start of every session to refresh {{accessToken}})
+# @name login
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "username": "{{username}}",
+  "password": "{{password}}"
+}
+
+
+############################################################
+# Auth — read-only / safe
+############################################################
+
+### Current user
+GET {{baseUrl}}/auth/me
+Authorization: Bearer {{accessToken}}
+
+
+
+############################################################
+# Owners (CRUD)
+############################################################
+
+### List all owners (includes pets, pet types, and visits)
+GET {{baseUrl}}/api/owners
+Authorization: Bearer {{accessToken}}
+
+
+
+############################################################
+# Pets (flat resource — no POST, that lives under owners)
+############################################################
+
+### List all pets (includes type, owner, visits)
+GET {{baseUrl}}/api/pets
+Authorization: Bearer {{accessToken}}
+
+### Get pet 1
+GET {{baseUrl}}/api/pets/1
+Authorization: Bearer {{accessToken}}
+
+
+
+############################################################
+# Visits (flat resource)
+############################################################
+
+### List all visits (newest first, includes pet)
+GET {{baseUrl}}/api/visits
+Authorization: Bearer {{accessToken}}
+
+### Get visit by id (may 404 if your seed has no visits yet)
+GET {{baseUrl}}/api/visits/1
+Authorization: Bearer {{accessToken}}
+
+### Create a visit (pet_id in body — for nested form, see Owner → Pet → Visits)
+# @name createVisit
+POST {{baseUrl}}/api/visits
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "pet_id": 1,
+  "visit_date": "2026-06-06",
+  "description": "Standalone visit creation"
+}
+
+### Update visit
+PUT {{baseUrl}}/api/visits/{{createVisit.response.body.id}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "pet_id": 1,
+  "visit_date": "2026-06-01",
+  "description": "Updated visit description"
+}
+
+### Delete visit
+DELETE {{baseUrl}}/api/visits/{{createVisit.response.body.id}}
+Authorization: Bearer {{accessToken}}

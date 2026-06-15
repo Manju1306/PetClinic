@@ -1,0 +1,22 @@
+import type { Request, Response, Express} from 'express';
+import { Sequelize } from 'sequelize';
+import { initModels, Owner, Pet } from '../models/petclinic.models';
+ 
+
+const welcome = async (req: Request, res: Response) => {
+    res.send('Welcome!');
+
+ const sequelize = new Sequelize({
+  dialect: 'sqlite',
+  storage: './petclinic.db',
+});
+
+ initModels(sequelize);
+ const owners = await Owner.findAll({ include: [{ model: Pet, as: 'pets' }] });
+};
+
+const hello = (req: Request, res: Response) => {
+    res.send('Hello World!');
+};
+
+export  { hello, welcome };

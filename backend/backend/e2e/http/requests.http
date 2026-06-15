@@ -1,0 +1,501 @@
+# PetClinic API — manual test requests
+# Compatible with VS Code REST Client and the JetBrains HTTP client.
+# Click "Send Request" above each block to fire it.
+#
+# Recommended order on a fresh DB:
+#   1. Run ### signup once (or ### login if the user already exists).
+#   2. Token vars auto-fill from the named login/signup response — every
+#      subsequent request below uses {{accessToken}} / {{refreshToken}}.
+#   3. CRUD blocks chain via {{<name>.response.body.id}} — run the create
+#      block first, then the update/delete below it.
+#   4. The destructive auth flows (password change, reset, logout) live at
+#      the bottom on purpose; running them earlier will invalidate the token.
+
+@baseUrl = http://localhost:3000
+@username = httptest
+@password = hunter2hunter2
+@email = httptest@example.com
+
+# These resolve once /auth/login (or /auth/signup) has been sent during the
+# current session. REST Client and the JetBrains HTTP client both support
+# the {{requestName.response.body.field}} reference form.
+@accessToken = {{login.response.body.access_token}}
+@refreshToken = {{login.response.body.refresh_token}}
+
+
+############################################################
+# Public — no auth required
+############################################################
+
+### Health check
+GET {{baseUrl}}/health
+
+### OpenAPI raw spec
+GET {{baseUrl}}/api/docs.json
+
+### OpenAPI raw spec in yaml
+GET {{baseUrl}}/api/docs.yaml
+
+
+############################################################
+# Setup — get a token
+############################################################
+
+### Signup (run once per fresh DB; returns 409 if the user already exists)
+# @name signup
+POST {{baseUrl}}/auth/signup
+Content-Type: application/json
+
+{
+  "username": "{{username}}",
+  "password": "{{password}}",
+  "email": "{{email}}"
+}
+
+### Login (run this at the start of every session to refresh {{accessToken}})
+# @name login
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "username": "{{username}}",
+  "password": "{{password}}"
+}
+
+
+############################################################
+# Auth — read-only / safe
+############################################################
+
+### Current user
+GET {{baseUrl}}/auth/me
+Authorization: Bearer {{accessToken}}
+
+### Rotate refresh token (old refresh becomes invalid afterwards)
+# @name refresh
+POST {{baseUrl}}/auth/refresh
+Content-Type: application/json
+
+{
+  "refresh_token": "{{refreshToken}}"
+}
+
+
+############################################################
+# Owners (CRUD)
+############################################################
+
+### List all owners (includes pets, pet types, and visits)
+GET {{baseUrl}}/api/owners
+Authorization: Bearer {{accessToken}}
+
+### Filter owners by last-name prefix
+GET {{baseUrl}}/api/owners?lastName=Dav
+Authorization: Bearer {{accessToken}}
+
+### Get owner 1 (seed: George Franklin)
+GET {{baseUrl}}/api/owners/1
+Authorization: Bearer {{accessToken}}
+
+### Create owner
+# @name createOwner
+POST {{baseUrl}}/api/owners
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "first_name": "Ada",
+  "last_name": "Lovelace",
+  "address": "1 Analytical Engine Lane",
+  "city": "London",
+  "telephone": "5550101"
+}
+
+### Update the owner we just created
+PUT {{baseUrl}}/api/owners/{{createOwner.response.body.id}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "first_name": "Ada",
+  "last_name": "Lovelace-Byron",
+  "address": "1 Analytical Engine Lane",
+  "city": "London",
+  "telephone": "5550102"
+}
+
+### Delete the owner we just created
+DELETE {{baseUrl}}/api/owners/{{createOwner.response.body.id}}
+Authorization: Bearer {{accessToken}}
+
+
+############################################################
+# Owner → Pets (nested)
+############################################################
+
+### Create a pet for owner 1 (type 1 = cat). owner_id comes from the URL.
+# @name createPetForOwner
+POST {{baseUrl}}/api/owners/1/pets
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Whiskers",
+  "birth_date": "2022-04-01",
+  "type_id": 1
+}
+
+### Get owner 1's specific pet (404 if it belongs to a different owner)
+GET {{baseUrl}}/api/owners/1/pets/{{createPetForOwner.response.body.id}}
+Authorization: Bearer {{accessToken}}
+
+### Update owner 1's pet
+PUT {{baseUrl}}/api/owners/1/pets/{{createPetForOwner.response.body.id}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Whiskers Jr.",
+  "birth_date": "2022-04-01",
+  "type_id": 1
+}
+
+
+############################################################
+# Owner → Pet → Visits (nested)
+############################################################
+
+### List visits for that pet
+GET {{baseUrl}}/api/owners/1/pets/{{createPetForOwner.response.body.id}}/visits
+Authorization: Bearer {{accessToken}}
+
+### Add a visit. pet_id comes from the URL.
+POST {{baseUrl}}/api/owners/1/pets/{{createPetForOwner.response.body.id}}/visits
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "visit_date": "2026-05-16",
+  "description": "Annual checkup"
+}
+
+
+############################################################
+# Pets (flat resource — no POST, that lives under owners)
+############################################################
+
+### List all pets (includes type, owner, visits)
+GET {{baseUrl}}/api/pets
+Authorization: Bearer {{accessToken}}
+
+### Get pet 1
+GET {{baseUrl}}/api/pets/1
+Authorization: Bearer {{accessToken}}
+
+### Update pet we created above
+PUT {{baseUrl}}/api/pets/{{createPetForOwner.response.body.id}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Whiskers III",
+  "birth_date": "2022-04-01",
+  "type_id": 2,
+  "owner_id": 1
+}
+
+### Delete pet we created above
+DELETE {{baseUrl}}/api/pets/{{createPetForOwner.response.body.id}}
+Authorization: Bearer {{accessToken}}
+
+
+############################################################
+# Vets + Specialties (M2M)
+############################################################
+
+### List all vets (with specialties included)
+GET {{baseUrl}}/api/vets
+Authorization: Bearer {{accessToken}}
+
+### Get vet 3 (seed: Linda Douglas — surgery + dentistry)
+GET {{baseUrl}}/api/vets/3
+Authorization: Bearer {{accessToken}}
+
+### Create vet with specialty ids (plain-number shape)
+# @name createVet
+POST {{baseUrl}}/api/vets
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "first_name": "Grace",
+  "last_name": "Hopper",
+  "specialties": [1, 3]
+}
+
+### Replace specialty membership using the {id} object shape
+PUT {{baseUrl}}/api/vets/{{createVet.response.body.id}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "first_name": "Grace",
+  "last_name": "Hopper",
+  "specialties": [{ "id": 2 }]
+}
+
+### Update vet but omit specialties — membership left untouched
+PUT {{baseUrl}}/api/vets/{{createVet.response.body.id}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "first_name": "Rear Admiral Grace",
+  "last_name": "Hopper"
+}
+
+### Delete vet (also clears its join rows)
+DELETE {{baseUrl}}/api/vets/{{createVet.response.body.id}}
+Authorization: Bearer {{accessToken}}
+
+
+############################################################
+# Specialties (CRUD)
+############################################################
+
+### List specialties
+GET {{baseUrl}}/api/specialties
+Authorization: Bearer {{accessToken}}
+
+### Get specialty 1 (seed: radiology)
+GET {{baseUrl}}/api/specialties/1
+Authorization: Bearer {{accessToken}}
+
+### Create specialty
+# @name createSpecialty
+POST {{baseUrl}}/api/specialties
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "cardiology"
+}
+
+### Update specialty
+PUT {{baseUrl}}/api/specialties/{{createSpecialty.response.body.id}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "cardio-thoracic"
+}
+
+### Delete specialty
+DELETE {{baseUrl}}/api/specialties/{{createSpecialty.response.body.id}}
+Authorization: Bearer {{accessToken}}
+
+
+############################################################
+# Pet types (CRUD)
+############################################################
+
+### List pet types (alphabetical)
+GET {{baseUrl}}/api/pettypes
+Authorization: Bearer {{accessToken}}
+
+### Get pet type 2 (seed: dog)
+GET {{baseUrl}}/api/pettypes/2
+Authorization: Bearer {{accessToken}}
+
+### Create pet type
+# @name createPetType
+POST {{baseUrl}}/api/pettypes
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "ferret"
+}
+
+### Update pet type
+PUT {{baseUrl}}/api/pettypes/{{createPetType.response.body.id}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "ferret (domestic)"
+}
+
+### Delete pet type
+DELETE {{baseUrl}}/api/pettypes/{{createPetType.response.body.id}}
+Authorization: Bearer {{accessToken}}
+
+
+############################################################
+# Visits (flat resource)
+############################################################
+
+### List all visits (newest first, includes pet)
+GET {{baseUrl}}/api/visits
+Authorization: Bearer {{accessToken}}
+
+### Get visit by id (may 404 if your seed has no visits yet)
+GET {{baseUrl}}/api/visits/1
+Authorization: Bearer {{accessToken}}
+
+### Create a visit (pet_id in body — for nested form, see Owner → Pet → Visits)
+# @name createVisit
+POST {{baseUrl}}/api/visits
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "pet_id": 1,
+  "visit_date": "2026-05-16",
+  "description": "Standalone visit creation"
+}
+
+### Update visit
+PUT {{baseUrl}}/api/visits/{{createVisit.response.body.id}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "pet_id": 1,
+  "visit_date": "2026-06-01",
+  "description": "Updated visit description"
+}
+
+### Delete visit
+DELETE {{baseUrl}}/api/visits/{{createVisit.response.body.id}}
+Authorization: Bearer {{accessToken}}
+
+
+############################################################
+# Users (admin-style user creation — currently any logged-in user)
+############################################################
+# This route accepts arbitrary `roles` in the body. Gate it behind
+# requireRole('ROLE_ADMIN') in src/app.ts once you have admin accounts.
+
+### Create a user with explicit roles
+POST {{baseUrl}}/api/users
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "username": "vet-staff-1",
+  "password": "staff-pw-12345",
+  "email": "vet-staff-1@example.com",
+  "enabled": true,
+  "roles": ["ROLE_VET_ADMIN"]
+}
+
+
+############################################################
+# Error responses (sanity checks)
+############################################################
+
+### 401 — no Authorization header
+GET {{baseUrl}}/api/owners
+
+### 401 — malformed token
+GET {{baseUrl}}/api/owners
+Authorization: Bearer not.a.real.token
+
+### 400 — non-integer path param
+GET {{baseUrl}}/api/owners/abc
+Authorization: Bearer {{accessToken}}
+
+### 404 — unknown id
+GET {{baseUrl}}/api/owners/99999
+Authorization: Bearer {{accessToken}}
+
+### 404 — unknown route
+GET {{baseUrl}}/api/nonexistent
+Authorization: Bearer {{accessToken}}
+
+### 400 — signup with short password (< 8 chars)
+POST {{baseUrl}}/auth/signup
+Content-Type: application/json
+
+{
+  "username": "shortpw",
+  "password": "abc",
+  "email": "shortpw@example.com"
+}
+
+### 409 — signup with duplicate username (run signup above first)
+POST {{baseUrl}}/auth/signup
+Content-Type: application/json
+
+{
+  "username": "{{username}}",
+  "password": "doesntmatter12345",
+  "email": "duplicate@example.com"
+}
+
+### 401 — login with bad password
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "username": "{{username}}",
+  "password": "definitely-wrong"
+}
+
+
+############################################################
+# Destructive auth flows — leave for last
+############################################################
+# Each of these can invalidate your current {{accessToken}} or
+# {{refreshToken}}. Re-run ### login above to get fresh tokens
+# after exercising any of them.
+
+### Update email on the current account
+PATCH {{baseUrl}}/auth/me/account
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "email": "httptest+updated@example.com"
+}
+
+### Change password — revokes ALL refresh tokens for this user
+# Returns a fresh token pair so the current client stays signed in.
+# After running this, login again to keep {{password}} matching the file.
+PATCH {{baseUrl}}/auth/me/password
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "current_password": "{{password}}",
+  "new_password": "{{password}}"
+}
+
+### Step 1 of password reset — emails a link (logged to server stdout in dev)
+# Always returns 204, even if the email is unknown.
+POST {{baseUrl}}/auth/password-reset/request
+Content-Type: application/json
+
+{
+  "email": "{{email}}"
+}
+
+### Step 2 of password reset — paste the token from the server log
+# Look for the line:  [password-reset] <user> (<email>) -> .../reset-password?token=<TOKEN>
+POST {{baseUrl}}/auth/password-reset/confirm
+Content-Type: application/json
+
+{
+  "token": "PASTE-TOKEN-FROM-SERVER-LOG-HERE",
+  "new_password": "{{password}}"
+}
+
+### Logout — revoke this refresh token
+# Access token remains valid until it expires (~15 min); drop it client-side.
+POST {{baseUrl}}/auth/logout
+Content-Type: application/json
+
+{
+  "refresh_token": "{{refreshToken}}"
+}

@@ -1,0 +1,1113 @@
+openapi: 3.0.3
+info:
+  title: PetClinic API
+  version: 1.0.0
+  description: |
+    REST API for the Spring PetClinic schema (TypeScript / Express / Sequelize port).
+
+    Interactive docs: `/api/docs`. Raw spec: `/api/docs.json`.
+
+    **Authentication.** Every `/api/*` endpoint requires a Bearer access token
+    obtained from `POST /auth/login` or `POST /auth/signup`. Unauthenticated
+    requests get `401`. The `/auth/*` endpoints, `/health`, and the docs are
+    public.
+
+servers:
+  - url: /
+    description: Same origin as the running server.
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+  - name: Owners
+  - name: Pets
+  - name: Vets
+  - name: Specialties
+  - name: PetTypes
+  - name: Visits
+  - name: Users
+  - name: Health
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness check
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /auth/signup:
+    post:
+      tags: [Auth]
+      summary: Create an account and receive a token pair
+      security: []
+      description: |
+        Creates a `User` with a single default role (`ROLE_USER`) and returns an
+        access + refresh token pair. Use this for public self-service signup.
+        For administrative user creation (with arbitrary roles), use `POST /api/users`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SignupInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Exchange credentials for a token pair
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate a refresh token for a new pair
+      security: []
+      description: Revokes the presented refresh token and issues a new access + refresh pair. Roles are re-read from the database, so role changes take effect within one refresh.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke a refresh token
+      security: []
+      description: Revokes the presented refresh token. Access tokens remain valid until they expire; clients are expected to drop them locally.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshInput' }
+      responses:
+        '204': { description: No Content }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get the currently authenticated user
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthUser' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/me/account:
+    patch:
+      tags: [Auth]
+      summary: Update the current user's account details
+      description: 'Only `email` is editable. `username` is the natural primary key and cannot change; `enabled` and `roles` are admin concerns.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountUpdateInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthUser' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /auth/me/password:
+    patch:
+      tags: [Auth]
+      summary: Change the current user's password
+      description: Requires the current password. On success, revokes all of the user's refresh tokens and returns a fresh pair.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordChangeInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/password-reset/request:
+    post:
+      tags: [Auth]
+      summary: Request a password reset link
+      security: []
+      description: |
+        Always returns 204 regardless of whether the email is known — this
+        avoids leaking which addresses are registered. In dev, the reset link
+        is logged to the server console; replace `deliverResetLink` with real
+        email delivery for production.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordResetRequestInput' }
+      responses:
+        '204': { description: No Content }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /auth/password-reset/confirm:
+    post:
+      tags: [Auth]
+      summary: Complete a password reset
+      security: []
+      description: Consumes a reset token, sets the new password, and revokes all of the user's refresh tokens.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordResetConfirmInput' }
+      responses:
+        '204': { description: No Content }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/owners:
+    get:
+      tags: [Owners]
+      summary: List owners
+      parameters:
+        - in: query
+          name: lastName
+          required: false
+          schema: { type: string }
+          description: Prefix match on `last_name` (case-sensitive in SQLite). Owners are returned with their pets, each pet's type, and each pet's visits.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Owner' }
+    post:
+      tags: [Owners]
+      summary: Create owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OwnerInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Owner' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/owners/{ownerId}:
+    parameters:
+      - $ref: '#/components/parameters/OwnerId'
+    get:
+      tags: [Owners]
+      summary: Get owner by id (includes pets, pet types, and visits)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Owner' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Owners]
+      summary: Update owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OwnerInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Owner' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [Owners]
+      summary: Delete owner
+      responses:
+        '204': { description: No Content }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/owners/{ownerId}/pets:
+    parameters:
+      - $ref: '#/components/parameters/OwnerId'
+    post:
+      tags: [Owners, Pets]
+      summary: Create a pet for this owner
+      description: '`owner_id` is taken from the URL; do not send it in the body.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PetInputForOwner' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pet' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/owners/{ownerId}/pets/{petId}:
+    parameters:
+      - $ref: '#/components/parameters/OwnerId'
+      - $ref: '#/components/parameters/PetId'
+    get:
+      tags: [Owners, Pets]
+      summary: Get a pet belonging to this owner
+      description: 404 if the pet exists but belongs to a different owner.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pet' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Owners, Pets]
+      summary: Update a pet belonging to this owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PetInputForOwner' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pet' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/owners/{ownerId}/pets/{petId}/visits:
+    parameters:
+      - $ref: '#/components/parameters/OwnerId'
+      - $ref: '#/components/parameters/PetId'
+    get:
+      tags: [Owners, Visits]
+      summary: List visits for a pet belonging to this owner
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Visit' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Owners, Visits]
+      summary: Add a visit to a pet belonging to this owner
+      description: '`pet_id` is taken from the URL; do not send it in the body.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VisitInputForPet' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Visit' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/pets:
+    get:
+      tags: [Pets]
+      summary: List all pets (with type, owner, and visits included)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Pet' }
+
+  /api/pets/{petId}:
+    parameters:
+      - $ref: '#/components/parameters/PetId'
+    get:
+      tags: [Pets]
+      summary: Get pet by id (with type, owner, and visits included)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pet' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Pets]
+      summary: Update pet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PetInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pet' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [Pets]
+      summary: Delete pet
+      responses:
+        '204': { description: No Content }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/vets:
+    get:
+      tags: [Vets]
+      summary: List vets (with specialties included)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Vet' }
+    post:
+      tags: [Vets]
+      summary: Create vet
+      description: |
+        `specialties`, if provided, replaces the vet's specialty membership.
+        Accepts either an array of specialty ids or an array of `{ id }` objects.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VetInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vet' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/vets/{vetId}:
+    parameters:
+      - $ref: '#/components/parameters/VetId'
+    get:
+      tags: [Vets]
+      summary: Get vet by id (with specialties included)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vet' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Vets]
+      summary: Update vet
+      description: |
+        If `specialties` is present in the body, the vet's specialty membership is
+        replaced wholesale (delete + bulk insert). Omit the field to leave it untouched.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VetInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vet' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [Vets]
+      summary: Delete vet (also clears its specialty join rows)
+      responses:
+        '204': { description: No Content }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/pettypes:
+    get:
+      tags: [PetTypes]
+      summary: List pet types (alphabetical)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PetType' }
+    post:
+      tags: [PetTypes]
+      summary: Create pet type
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PetTypeInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PetType' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/pettypes/{petTypeId}:
+    parameters:
+      - $ref: '#/components/parameters/PetTypeId'
+    get:
+      tags: [PetTypes]
+      summary: Get pet type by id
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PetType' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [PetTypes]
+      summary: Update pet type
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PetTypeInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PetType' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [PetTypes]
+      summary: Delete pet type
+      responses:
+        '204': { description: No Content }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/specialties:
+    get:
+      tags: [Specialties]
+      summary: List specialties (alphabetical)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Specialty' }
+    post:
+      tags: [Specialties]
+      summary: Create specialty
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SpecialtyInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Specialty' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/specialties/{specialtyId}:
+    parameters:
+      - $ref: '#/components/parameters/SpecialtyId'
+    get:
+      tags: [Specialties]
+      summary: Get specialty by id
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Specialty' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Specialties]
+      summary: Update specialty
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SpecialtyInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Specialty' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [Specialties]
+      summary: Delete specialty
+      responses:
+        '204': { description: No Content }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/visits:
+    get:
+      tags: [Visits]
+      summary: List visits (newest first, with pet included)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Visit' }
+    post:
+      tags: [Visits]
+      summary: Create visit
+      description: 'Use `pet_id` in the body. For visits scoped to an owner+pet, prefer `POST /api/owners/{ownerId}/pets/{petId}/visits`.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VisitInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Visit' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/visits/{visitId}:
+    parameters:
+      - $ref: '#/components/parameters/VisitId'
+    get:
+      tags: [Visits]
+      summary: Get visit by id (with pet included)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Visit' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Visits]
+      summary: Update visit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VisitInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Visit' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [Visits]
+      summary: Delete visit
+      responses:
+        '204': { description: No Content }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/users:
+    post:
+      tags: [Users]
+      summary: Create user
+      description: |
+        Password is hashed with bcrypt (cost 10). User + roles are inserted in a
+        single transaction. The response excludes the password hash.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token issued by `/auth/login`, `/auth/signup`, or `/auth/refresh`.
+
+  parameters:
+    OwnerId:
+      in: path
+      name: ownerId
+      required: true
+      schema: { type: integer, minimum: 0 }
+    PetId:
+      in: path
+      name: petId
+      required: true
+      schema: { type: integer, minimum: 0 }
+    VetId:
+      in: path
+      name: vetId
+      required: true
+      schema: { type: integer, minimum: 0 }
+    VisitId:
+      in: path
+      name: visitId
+      required: true
+      schema: { type: integer, minimum: 0 }
+    SpecialtyId:
+      in: path
+      name: specialtyId
+      required: true
+      schema: { type: integer, minimum: 0 }
+    PetTypeId:
+      in: path
+      name: petTypeId
+      required: true
+      schema: { type: integer, minimum: 0 }
+
+  responses:
+    BadRequest:
+      description: Malformed request (bad path param, missing required field, validation failure).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing, invalid, or expired access token.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Authenticated, but the user lacks the required role.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Unique-constraint or foreign-key violation.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: Owner with id 99 not found
+        details:
+          type: array
+          items: { type: string }
+          description: Per-field validation messages (Sequelize validation / unique errors).
+        path:
+          type: string
+          description: Returned for the global "Route not found" 404.
+
+    Owner:
+      type: object
+      required: [id]
+      properties:
+        id: { type: integer, readOnly: true, example: 1 }
+        first_name: { type: string, nullable: true, example: George }
+        last_name:  { type: string, nullable: true, example: Franklin }
+        address:    { type: string, nullable: true, example: 110 W. Liberty St. }
+        city:       { type: string, nullable: true, example: Madison }
+        telephone:  { type: string, nullable: true, example: '6085551023' }
+        pets:
+          type: array
+          items: { $ref: '#/components/schemas/Pet' }
+          description: Present when fetched via the owners endpoints (which include pets, pet types, and visits).
+
+    OwnerInput:
+      type: object
+      properties:
+        first_name: { type: string, nullable: true }
+        last_name:  { type: string, nullable: true }
+        address:    { type: string, nullable: true }
+        city:       { type: string, nullable: true }
+        telephone:  { type: string, nullable: true }
+
+    Pet:
+      type: object
+      required: [id, type_id, owner_id]
+      properties:
+        id:         { type: integer, readOnly: true, example: 1 }
+        name:       { type: string, nullable: true, example: Leo }
+        birth_date: { type: string, format: date, nullable: true, example: '2010-09-07' }
+        type_id:    { type: integer, example: 1 }
+        owner_id:   { type: integer, example: 1 }
+        type:
+          allOf:
+            - $ref: '#/components/schemas/PetType'
+          description: Included via Sequelize association.
+        owner:
+          allOf:
+            - $ref: '#/components/schemas/Owner'
+          description: Included via Sequelize association.
+        visits:
+          type: array
+          items: { $ref: '#/components/schemas/Visit' }
+          description: Included via Sequelize association.
+
+    PetInput:
+      type: object
+      description: Body for `PUT /api/pets/{petId}`.
+      properties:
+        name:       { type: string, nullable: true }
+        birth_date: { type: string, format: date, nullable: true }
+        type_id:    { type: integer }
+        owner_id:   { type: integer }
+
+    PetInputForOwner:
+      type: object
+      description: Body for pet endpoints nested under `/api/owners/{ownerId}`. `owner_id` is taken from the URL.
+      required: [type_id]
+      properties:
+        name:       { type: string, nullable: true }
+        birth_date: { type: string, format: date, nullable: true }
+        type_id:    { type: integer }
+
+    Vet:
+      type: object
+      required: [id]
+      properties:
+        id:         { type: integer, readOnly: true }
+        first_name: { type: string, nullable: true }
+        last_name:  { type: string, nullable: true }
+        specialties:
+          type: array
+          items: { $ref: '#/components/schemas/Specialty' }
+
+    VetInput:
+      type: object
+      properties:
+        first_name: { type: string, nullable: true }
+        last_name:  { type: string, nullable: true }
+        specialties:
+          description: Replaces the vet's specialty membership when present. Accepts plain ids or `{ id }` objects.
+          oneOf:
+            - type: array
+              items: { type: integer }
+              example: [1, 2]
+            - type: array
+              items:
+                type: object
+                required: [id]
+                properties:
+                  id: { type: integer }
+              example:
+                - { id: 1 }
+                - { id: 2 }
+
+    Specialty:
+      type: object
+      required: [id]
+      properties:
+        id:   { type: integer, readOnly: true }
+        name: { type: string, nullable: true }
+
+    SpecialtyInput:
+      type: object
+      properties:
+        name: { type: string, nullable: true }
+
+    PetType:
+      type: object
+      required: [id]
+      properties:
+        id:   { type: integer, readOnly: true }
+        name: { type: string, nullable: true }
+
+    PetTypeInput:
+      type: object
+      properties:
+        name: { type: string, nullable: true }
+
+    Visit:
+      type: object
+      required: [id, pet_id]
+      properties:
+        id:          { type: integer, readOnly: true }
+        pet_id:      { type: integer }
+        visit_date:  { type: string, format: date, nullable: true }
+        description: { type: string, nullable: true }
+        pet:
+          allOf:
+            - $ref: '#/components/schemas/Pet'
+          description: Included via Sequelize association.
+
+    VisitInput:
+      type: object
+      description: Body for `POST /api/visits` and `PUT /api/visits/{visitId}`.
+      required: [pet_id]
+      properties:
+        pet_id:      { type: integer }
+        visit_date:  { type: string, format: date, nullable: true }
+        description: { type: string, nullable: true }
+
+    VisitInputForPet:
+      type: object
+      description: Body for visit endpoints nested under a pet. `pet_id` is taken from the URL.
+      properties:
+        visit_date:  { type: string, format: date, nullable: true }
+        description: { type: string, nullable: true }
+
+    User:
+      type: object
+      description: User as returned by the API (password hash excluded).
+      required: [username, enabled]
+      properties:
+        username: { type: string }
+        email:    { type: string, format: email, nullable: true }
+        enabled:  { type: boolean }
+        roles:
+          type: array
+          items: { $ref: '#/components/schemas/Role' }
+
+    UserInput:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          description: Plaintext on the wire; hashed with bcrypt before storage.
+        email:
+          type: string
+          format: email
+          nullable: true
+        enabled:
+          type: boolean
+          default: true
+        roles:
+          description: Role names. Accepts plain strings or `{ name }` objects.
+          oneOf:
+            - type: array
+              items: { type: string }
+              example: [ROLE_OWNER_ADMIN]
+            - type: array
+              items:
+                type: object
+                required: [name]
+                properties:
+                  name: { type: string }
+              example:
+                - { name: ROLE_OWNER_ADMIN }
+
+    Role:
+      type: object
+      required: [id, username, role]
+      properties:
+        id:       { type: integer, readOnly: true }
+        username: { type: string }
+        role:     { type: string }
+
+    # ------------------------------------------------------------------------
+    # Auth schemas
+    # ------------------------------------------------------------------------
+    AuthUser:
+      type: object
+      description: Shape of the current user as returned by the auth endpoints (roles flattened to string names).
+      required: [username, enabled, roles]
+      properties:
+        username: { type: string }
+        email:    { type: string, format: email, nullable: true }
+        enabled:  { type: boolean }
+        roles:
+          type: array
+          items: { type: string }
+          example: [ROLE_USER]
+
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in]
+      properties:
+        access_token:
+          type: string
+          description: 'Short-lived JWT for the `Authorization: Bearer` header.'
+        refresh_token:
+          type: string
+          description: 'Opaque random token; submit to `/auth/refresh` to rotate.'
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          description: Seconds until the access token expires.
+
+    AuthResponse:
+      type: object
+      description: Returned by signup, login, and password change.
+      required: [user, access_token, refresh_token, token_type, expires_in]
+      allOf:
+        - $ref: '#/components/schemas/TokenPair'
+        - type: object
+          required: [user]
+          properties:
+            user: { $ref: '#/components/schemas/AuthUser' }
+
+    SignupInput:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 20 }
+        password: { type: string, format: password, minLength: 8, writeOnly: true }
+        email:    { type: string, format: email, nullable: true }
+
+    LoginInput:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string, format: password, writeOnly: true }
+
+    RefreshInput:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string }
+
+    AccountUpdateInput:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          nullable: true
+          description: Pass `null` to clear the email.
+
+    PasswordChangeInput:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string, format: password, writeOnly: true }
+        new_password:     { type: string, format: password, minLength: 8, writeOnly: true }
+
+    PasswordResetRequestInput:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+
+    PasswordResetConfirmInput:
+      type: object
+      required: [token, new_password]
+      properties:
+        token:        { type: string }
+        new_password: { type: string, format: password, minLength: 8, writeOnly: true }
