@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { tool } from 'ai';
 import { Vet, Specialty, Pet, PetType, Visit, Owner } from '../db';
+import { searchKnowledge } from './knowledge/rag';
 
 // ── What are "tools"? ───────────────────────────────────────────────────
 //
@@ -214,6 +215,25 @@ export function createPetClinicTools(username: string, roles: string[] = []) {
       execute: async () => {
         const types = await PetType.findAll({ order: [['name', 'ASC']] });
         return types.map(t => ({ id: t.id, name: t.name }));
+      },
+    }),
+
+    search_knowledge: tool({
+      description:
+        'Search the clinic knowledge base for pet care advice, clinic information, ' +
+        'pricing, services, and general veterinary guidance. Use this when users ask ' +
+        'questions about pet health, vaccinations, nutrition, dental care, exercise, ' +
+        'parasites, emergencies, clinic hours, pricing, or services offered.',
+      inputSchema: z.object({
+        query: z.string().describe('The search query — what the user wants to know about'),
+        category: z.enum(['pet-care', 'clinic']).optional().describe('Optional filter: "pet-care" for health/care topics, "clinic" for hours/services/pricing'),
+      }),
+      execute: async ({ query, category }: { query: string; category?: 'pet-care' | 'clinic' }) => {
+        const results = await searchKnowledge(query, 3, category);
+        if (results.length === 0) {
+          return { message: 'No relevant articles found. Try rephrasing your question.' };
+        }
+        return results.map(r => ({ title: r.title, content: r.content, relevance: Math.round(r.score * 100) + '%' }));
       },
     }),
   };
