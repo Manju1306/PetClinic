@@ -2,51 +2,9 @@ import {
   streamText,
   convertToModelMessages,
   stepCountIs,
-  type LanguageModel,
 } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai';
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createPetClinicTools } from './tools';
-
-// ── Multi-provider AI setup ─────────────────────────────────────────────
-//
-// Set AI_PROVIDER in .env to switch:
-//   "google"    → Gemini (free tier available)
-//   "openai"    → GPT-4o
-//   "anthropic" → Claude
-
-function getModel(): LanguageModel {
-  const provider = (process.env.AI_PROVIDER ?? 'openai').toLowerCase();
-
-  switch (provider) {
-    case 'anthropic': {
-      const anthropic = createAnthropic({
-        apiKey: process.env.ANTHROPIC_API_KEY,
-      });
-      return anthropic(process.env.AI_MODEL ?? 'claude-sonnet-4-20250514');
-    }
-    case 'google': {
-      const google = createGoogleGenerativeAI({
-        apiKey: process.env.GOOGLE_AI_API_KEY,
-      });
-      return google(process.env.AI_MODEL ?? 'gemini-2.0-flash');
-    }
-    case 'openai':
-    default: {
-      const openai = createOpenAI({
-        apiKey: process.env.OPENAI_API_KEY,
-      });
-      return openai(process.env.AI_MODEL ?? 'gpt-4o');
-    }
-  }
-}
-
-// ── System Prompt ───────────────────────────────────────────────────────
-//
-// Adapted from the official Spring PetClinic AI assistant
-// (spring.io/blog/2024/09/26/ai-meets-spring-petclinic)
-// but rewritten for PET OWNERS instead of clinic admins.
+import { llmGateway } from './gateway';
 
 const SYSTEM_PROMPT = `You are a friendly AI assistant for the Spring PetClinic veterinary clinic. You help pet owners manage their pets and visits.
 
@@ -76,6 +34,11 @@ For owners, pets, or visits - always answer with the correct data from the datab
 
 If the user is an admin, they can query pets and visits for any owner, not just their own. Use the ownerName parameter to search by owner name when asked about a specific user's pets.
 
+You also have access to a knowledge base via the search_knowledge tool. Use it when users ask about:
+- Pet care topics: vaccinations, nutrition, dental care, exercise, parasites, spay/neuter, emergencies, senior pet care
+- Clinic information: hours, location, services, pricing, new patient info
+Always search the knowledge base for these topics instead of relying on your general knowledge, so answers reflect this clinic's specific guidance.
+
 Keep responses concise - pet owners are busy people. Use bold for important names and dates.`;
 
 export interface ChatRequest {
@@ -85,8 +48,12 @@ export interface ChatRequest {
 }
 
 export async function chatStream(req: ChatRequest) {
-  const model = getModel();
+  const { model, provider } = await llmGateway.getModelWithFallback();
   const tools = createPetClinicTools(req.username, req.roles);
+  const config = llmGateway.getConfig();
+  const modelName = config.providers.find(p => p.name === provider)?.model ?? 'unknown';
+
+  const startTime = Date.now();
 
   const uiMessages = req.messages
     .filter(m => m.role === 'user' || m.role === 'assistant')
@@ -106,8 +73,25 @@ export async function chatStream(req: ChatRequest) {
     tools,
     maxRetries: 1,
     stopWhen: stepCountIs(5),
+    onFinish: () => {
+      llmGateway.logUsage({
+        provider,
+        model: modelName,
+        latencyMs: Date.now() - startTime,
+        success: true,
+        username: req.username,
+      });
+    },
     onError: (event) => {
       console.error('AI stream error:', event.error);
+      llmGateway.logUsage({
+        provider,
+        model: modelName,
+        latencyMs: Date.now() - startTime,
+        success: false,
+        error: String(event.error),
+        username: req.username,
+      });
     },
   });
 

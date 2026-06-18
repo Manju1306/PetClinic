@@ -12,6 +12,7 @@ import specialties from './routes/specialties';
 import visits from './routes/visits';
 import users from './routes/users';
 import chat from './routes/chat';
+import gateway from './routes/gateway';
 import auth from './routes/auth';
 
 import { openapiSpec } from './openapi';
@@ -49,6 +50,7 @@ export function createApp(): express.Express {
   app.use('/api/visits', requireAuth, visits);
   app.use('/api/users', requireAuth, users);
   app.use('/api/chat', requireAuth, chat);
+  app.use('/api/gateway', requireAuth, gateway);
 
   // 404 + error handler (must come last, in this order)
   app.use(notFoundHandler);
